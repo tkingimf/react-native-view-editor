@@ -19,7 +19,6 @@ const styles = StyleSheet.create({
 
 export class ViewEditor extends Component {
   static propTypes = {
-    style: View.propTypes.style,
     imageHeight: PropTypes.number.isRequired,
     imageWidth: PropTypes.number.isRequired,
     imageContainerHeight: PropTypes.number,
@@ -28,22 +27,10 @@ export class ViewEditor extends Component {
     maskHeight: PropTypes.number,
     maskWidth: PropTypes.number,
     maskPadding: PropTypes.number,
-    initialOffsetX: PropTypes.number,
-    initialOffsetY: PropTypes.number,
-    maxZoomScale: PropTypes.number,
-    children: PropTypes.any,
+    children: PropTypes.func,
     rotate: PropTypes.bool,
     panning: PropTypes.bool,
-    center: PropTypes.bool.isRequired,
-    isLandscape: PropTypes.bool,
-    isLong: PropTypes.bool,
-    isWide: PropTypes.bool,
-    // used for multi-images
-    bigContainerWidth: PropTypes.number,
-    // callbacks
-    onZoomCallback: PropTypes.func,
-    onSwipeDownCallback: PropTypes.func,
-  };
+  }
 
   static defaultProps = {
     maskWidth: width,
@@ -51,53 +38,42 @@ export class ViewEditor extends Component {
     maskPadding: 0,
     imageContainerWidth: width,
     imageContainerHeight: height,
-    initialOffsetX: 0,
-    initialOffsetY: 0,
-    maxZoomScale: 1,
-    center: true,
     rotate: false,
     panning: true,
-  };
+  }
 
   constructor(props, context) {
     super(props, context);
-    const imageDim = (props.isLandscape || props.isLong) && !props.isWide ? props.imageHeight : props.imageWidth;
-    const containerDim = props.isLong || props.isWide ? props.imageContainerHeight : props.imageContainerWidth;
     this.state = {
-      scale: new Animated.Value(containerDim / imageDim),
+      size: new Animated.ValueXY({
+        x: props.imageWidth,
+        y: props.imageHeight,
+      }),
       pan: new Animated.ValueXY(),
       angle: new Animated.Value('0deg'),
       animating: false,
-      render: false,
     };
     this._panResponder = {};
-    // panning variables
     this.panListener = null;
     this.currentPanValue = { x: 0, y: 0 };
-    this._pan = { x: 0, y: 0 };
-    // scaling variables
-    this.scaleListener = null;
-    this.currentScaleValue = 1;
-    this._scale = containerDim / imageDim;
-    // angle variables
+    this.sizeListener = null;
+    this.currentSizeValue = { x: props.imageWidth, y: props.imageHeight };
     this.angleListener = null;
     this.currentAngleValue = 0;
+    this._imageWidth = props.imageWidth;
+    this._imageHeight = props.imageHeight;
     this._angle = 0;
-    // used for multiTouch
     this._previousDistance = 0;
     this._previousAngle = 0;
     this._previousCenter = 0;
     this._multiTouch = false;
-    // methods
     this._handlePanResponderMove = this._handlePanResponderMove.bind(this);
     this._handlePanResponderEnd = this._handlePanResponderEnd.bind(this);
     this._updatePosition = this._updatePosition.bind(this);
     this._updateSize = this._updateSize.bind(this);
     this._checkAdjustment = this._checkAdjustment.bind(this);
     this._updatePanState = this._updatePanState.bind(this);
-    // callbacks
-    this._onZoomCallbackSuccess = false;
-    this._initialAdjustmentPerformed = false;
+    this._currentPanValue = { x: 0, y: 0 };
   }
 
   componentWillMount() {
@@ -111,88 +87,57 @@ export class ViewEditor extends Component {
   }
 
   componentDidMount() {
-    this.panListener = this.state.pan.addListener(value => this.currentPanValue = value);
-    this.scaleListener = this.state.scale.addListener(value => this.currentScaleValue = value);
-    this.angleListener = this.state.angle.addListener(value => this.currentAngleValue = value);
-    this._checkAdjustment();
-    this.state.pan.setOffset({ x: this.props.initialOffsetX, y: this.props.initialOffsetY });
-  }
-
-  componentDidUpdate(prevProps) {
-    const {
-      imageHeight,
-      imageWidth,
-      imageContainerWidth,
-      imageContainerHeight,
-    } = this.props;
-    const {
-      imageHeight: prevImageHeight,
-      imageWidth: prevImageWidth,
-      imageContainerWidth: prevImageContainerWidth,
-      imageContainerHeight: prevImageContainerHeight,
-    } = prevProps;
-    if (
-      imageHeight !== prevImageHeight ||
-      imageWidth !== prevImageWidth ||
-      imageContainerWidth !== prevImageContainerWidth ||
-      imageContainerHeight !== prevImageContainerHeight
-    ) {
-      this._checkAdjustment();
-    }
+    this.panListener = this.state.pan.addListener((value) => this.currentPanValue = value);
+    this.sizeListener = this.state.size.addListener((value) => this.currentSizeValue = value);
+    this.angleListener = this.state.angle.addListener((value) => this.currentAngleValue = value);
   }
 
   componentWillUnmount() {
     this.state.pan.removeListener(this.panListener);
-    this.state.scale.removeListener(this.scaleListener);
+    this.state.size.removeListener(this.sizeListener);
     this.state.angle.removeListener(this.angleListener);
   }
 
   _updatePosition(x, y) {
-    this.setState({ animating: true }, () => {
-      Animated.timing(
-        this.state.pan, {
-          toValue: { x, y },
-          easing: Easing.elastic(1),
-          duration: 250
-        }
-      ).start(() => this._updatePanState())
-    });
+    this.setState({ animating: true });
+    Animated.timing(
+      this.state.pan, {
+        toValue: { x, y },
+        easing: Easing.elastic(1),
+        duration: 250
+      }
+    ).start(() => this._updatePanState());
   }
 
-  _updateSize(scale) {
-    this.setState({ animating: true }, () => {
-      Animated.timing(
-        this.state.scale, {
-          toValue: scale,
-          easing: Easing.elastic(1),
-          duration: 250
-        }
-      ).start(() => {
-        this.setState({ animating: false });
-        this._scale = this.currentScaleValue.value;
-      });
+  _updateSize(x, y) {
+    this._checkAdjustment(x, y);
+    this.setState({ animating: true });
+    Animated.timing(
+      this.state.size, {
+        toValue: { x, y },
+        easing: Easing.elastic(1),
+        duration: 250
+      }
+    ).start(() => {
+      this.setState({ animating: false });
+      this._imageWidth = this.currentSizeValue.x;
+      this._imageHeight = this.currentSizeValue.y;
     });
   }
 
   _updatePanState(x = this.currentPanValue.x, y = this.currentPanValue.y) {
     this.state.pan.setOffset({ x, y });
     this.state.pan.setValue({ x: 0, y: 0 });
-    this.setState({ animating: false, render: true });
+    this.setState({ animating: false });
   }
 
   _handlePanResponderMove(e, gestureState) {
-    const { imageContainerWidth, imageWidth, imageHeight } = this.props;
     if (gestureState.numberActiveTouches === 1 && !this._multiTouch) {
       return Animated.event([
         null, { dx: this.state.pan.x, dy: this.state.pan.y }
       ])(e, gestureState);
     } else if (gestureState.numberActiveTouches !== 1) {
-      if (!this._onZoomCallbackSuccess && this.props.onZoomCallback) {
-        this._onZoomCallbackSuccess = true;
-        this.props.onZoomCallback(true);
-      }
       this._multiTouch = true;
-      // set the intial values
       this._previousDistance = this._previousDistance === 0 ?
         distance(e.nativeEvent.touches) : this._previousDistance;
       this._previousAngle = this._previousAngle === 0 ?
@@ -206,97 +151,71 @@ export class ViewEditor extends Component {
       );
       // zoom calculations
       const currentDistance = distance(e.nativeEvent.touches);
-      const newScale = ((currentDistance - this._previousDistance + imageContainerWidth) / imageContainerWidth) * this._scale;
-      this.state.scale.setValue(newScale);
-      // zoom to the center of the touches
-      // const currentCenter = center(e.nativeEvent.touches);
-      // const newWidth = newScale * imageWidth;
-      // const newHeight = newScale * imageHeight;
-      // const currentX = this._pan.x > 0 || newWidth < imageWidth ?
-      //   0 : this._pan.x;
-      // const currentY = this._pan.y > 0 || newHeight < imageHeight ?
-      //   0 : this._pan.y;
-      // console.log('pan', this._pan);
-      // const x = currentCenter.x - this._previousCenter.x + currentX;
-      // const y = currentCenter.y - this._previousCenter.y + currentY;
-      // this.state.pan.setOffset({ x, y });
-      // return Animated.event([
-      //   null, { dx: this.state.pan.x, dy: this.state.pan.y }
-      // ])(e, gestureState);
+      const newHeight = currentDistance - this._previousDistance + this._imageHeight;
+      const newWidth = this._imageWidth * (newHeight / this._imageHeight);
+      const currentCenter = center(e.nativeEvent.touches);
+      const currentX = this._currentPanValue.x > 0 || newWidth < this.props.imageWidth ?
+        0 : this._currentPanValue.x;
+      const currentY = this._currentPanValue.y > 0 || newHeight < this.props.imageHeight ?
+        0 : this._currentPanValue.y;
+      const x = currentCenter.x - this._previousCenter.x + (this._imageWidth - newWidth) / 2 + currentX;
+      const y = currentCenter.y - this._previousCenter.y + (this._imageHeight - newHeight) / 2 + currentY;
+      this.state.pan.setOffset({ x, y });
+      this.state.size.setValue({ x: newWidth, y: newHeight });
+      return Animated.event([
+        null, { dx: this.state.pan.x, dy: this.state.pan.y }
+      ])(e, gestureState);
     }
   }
 
-  _handlePanResponderEnd(e) {
-    const { imageWidth, imageHeight, isLandscape, isLong, isWide, maskWidth, maskHeight, maxZoomScale } = this.props;
-    const imageDim = (isLandscape || isLong) && !isWide ? imageHeight : imageWidth;
-    const maskDim = isLong || isWide ? maskHeight : maskWidth;
-    this._pan = this.currentPanValue;
+  _handlePanResponderEnd() {
+    this._currentPanValue = this.currentPanValue;
     this._updatePanState();
     if (this._multiTouch) {
-      this._scale = this.currentScaleValue.value;
+      this._imageWidth = this.currentSizeValue.x;
+      this._imageHeight = this.currentSizeValue.y;
       this._angle = this.currentAngleValue.value;
       this._multiTouch = false;
       this._previousDistance = 0;
       this._previousAngle = 0;
       this._previousCenter = 0;
-      if (imageDim * this._scale < maskDim) {
-        if (this.props.onZoomCallback) {
-          this.props.onZoomCallback(false);
-        }
-        this._updateSize(maskDim / imageDim);
-      } else if (this._scale > maxZoomScale) {
-        if (this.props.onZoomCallback) {
-          this.props.onZoomCallback(false);
-        }
-        this._updateSize(maxZoomScale);
+      const { maskWidth, maskHeight } = this.props;
+      if (this._imageWidth < maskWidth || this._imageHeight < maskHeight) {
+        const newWidth = this._imageWidth < maskWidth ? maskWidth : this._imageWidth;
+        const newHeight = this._imageHeight < maskHeight ? maskHeight : this._imageHeight;
+        this._updateSize(newWidth, newHeight);
       } else {
-        if (this.props.onZoomCallback) {
-          this.props.onZoomCallback(true)
-        }
+        this._checkAdjustment();
       }
+    } else {
+      this._checkAdjustment();
     }
-    this._checkAdjustment(e);
   }
 
-  _checkAdjustment(e) {
-    const { imageContainerHeight, imageContainerWidth, maskPadding, imageHeight: tempHeight, imageWidth: tempWidth, center, isLandscape } = this.props;
-    const imageHeight = isLandscape ? tempWidth : tempHeight;
-    const imageWidth = isLandscape ? tempHeight : tempWidth;
-    const widthDiff = this._scale * imageWidth - imageContainerWidth;
-    const heightDiff = this._scale * imageHeight - imageContainerHeight;
-    const maskPaddingDiffX = widthDiff < 0 && center ? -widthDiff / 2 : maskPadding;
-    const maskPaddingDiffY = heightDiff < 0 && center ? -heightDiff / 2 : maskPadding;
+  _checkAdjustment(newWidth = this._imageWidth, newHeight = this._imageHeight) {
     const positionUpdate = { x: 0, y: 0 };
-    const imageLeft = this.currentPanValue.x + widthDiff + maskPaddingDiffX;
-    const imageAbove = this.currentPanValue.y + heightDiff + maskPaddingDiffY;
-    const additionalWidth = (tempWidth - this._scale * imageWidth) / 2;
-    const additionalHeight = (tempHeight - this._scale * imageHeight) / 2;
-    if (this.currentPanValue.x > maskPaddingDiffX - additionalWidth) {
-      positionUpdate.x = -this.currentPanValue.x - additionalWidth + maskPaddingDiffX;
+    const imageAbove = this.currentPanValue.y + newHeight -
+      this.props.imageContainerHeight + this.props.maskPadding;
+    const imageLeft = this.currentPanValue.x + newWidth -
+      this.props.imageContainerWidth + this.props.maskPadding;
+    if (this.currentPanValue.x > this.props.maskPadding) {
+      positionUpdate.x = -this.currentPanValue.x + this.props.maskPadding;
     }
-    if (this.currentPanValue.y > maskPaddingDiffY - additionalHeight) {
-
-      positionUpdate.y = -this.currentPanValue.y - additionalHeight + maskPaddingDiffY;
-      if (!this._initialAdjustmentPerformed) {
-        this._initialAdjustmentPerformed = true;
-      } else if (this.props.onSwipeDownCallback) {
-        this.props.onSwipeDownCallback(positionUpdate, e);
-      }
+    if (this.currentPanValue.y > this.props.maskPadding) {
+      positionUpdate.y = -this.currentPanValue.y + this.props.maskPadding;
     }
-    if (imageAbove < -additionalHeight) {
-      positionUpdate.y = -imageAbove - additionalHeight;
+    if (imageAbove < 0) {
+      positionUpdate.y = -imageAbove;
     }
-    if (imageLeft < -additionalWidth) {
-      positionUpdate.x = -imageLeft - additionalWidth;
+    if (imageLeft < 0) {
+      positionUpdate.x = -imageLeft;
     }
     this._updatePosition(positionUpdate.x, positionUpdate.y);
   }
 
   render() {
-    const { pan, scale, render } = this.state;
+    const { pan, size } = this.state;
     const {
-      imageWidth,
-      imageHeight,
       imageContainerWidth,
       imageContainerHeight,
       imageMask,
@@ -307,12 +226,11 @@ export class ViewEditor extends Component {
     } = this.props;
     const layout = pan.getLayout();
     const animatedStyle = {
-      height: imageHeight,
-      width: imageWidth,
+      width: size.x,
+      height: size.y,
       transform: [
         { translateX: layout.left },
         { translateY: layout.top },
-        { scale }
       ]
     };
     if (rotate) {
@@ -321,8 +239,8 @@ export class ViewEditor extends Component {
     return (
       <View
         style={[
-          styles.container,
           style,
+          styles.container,
           { width: imageContainerWidth, height: imageContainerHeight }
         ]}
         {...this._panResponder.panHandlers}
@@ -330,9 +248,9 @@ export class ViewEditor extends Component {
         <Animated.View
           style={animatedStyle}
         >
-          {render && children}
+          {children(size.x, size.y)}
         </Animated.View>
-        {imageMask}
+        {imageMask && React.createElement(imageMask)}
       </View>
     );
   }
