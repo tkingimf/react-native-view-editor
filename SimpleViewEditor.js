@@ -27,7 +27,7 @@ export class ViewEditor extends Component {
     maskHeight: PropTypes.number,
     maskWidth: PropTypes.number,
     maskPadding: PropTypes.number,
-    children: PropTypes.func,
+    children: PropTypes.object,
     rotate: PropTypes.bool,
     panning: PropTypes.bool,
   }
